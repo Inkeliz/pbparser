@@ -452,19 +452,39 @@ func (p *parser) readListOptionsOnALine() ([]OptionElement, error) {
 }
 
 func (p *parser) readListOptions() ([]OptionElement, error) {
-	var options []OptionElement
-	optionsStr := p.readUntil(']')
-	pairs := strings.Split(optionsStr, ",")
-	for _, pair := range pairs {
-		arr := strings.Split(pair, "=")
-		if len(arr) != 2 {
-			return nil, p.errline("Option '%v' is not specified as expected", arr)
+	var (
+		options             []OptionElement
+		isIgnore, isEscaped bool
+		text                strings.Builder
+	)
+
+loop:
+	for {
+		v := p.read()
+		switch {
+		case isEscaped:
+			isEscaped = false
+			text.WriteRune(v)
+		case !isIgnore && v == '=':
+			oname, hasParenthesis := stripParenthesis(strings.TrimSpace(text.String()))
+			options = append(options, OptionElement{Name: oname, IsParenthesized: hasParenthesis})
+			text.Reset()
+		case !isIgnore && (v == ',' || v == ']'):
+			options[len(options)-1].Value = stripQuotes(strings.TrimSpace(text.String()))
+			text.Reset()
+			if v == ']' {
+				break loop
+			}
+		case isIgnore && v == '\\':
+			isEscaped = true
+		case v == '"':
+			isIgnore = !isIgnore
+			fallthrough
+		default:
+			text.WriteRune(v)
 		}
-		oname, hasParenthesis := stripParenthesis(strings.TrimSpace(arr[0]))
-		oval := stripQuotes(strings.TrimSpace(arr[1]))
-		oe := OptionElement{Name: oname, Value: oval, IsParenthesized: hasParenthesis}
-		options = append(options, oe)
 	}
+
 	return options, nil
 }
 
@@ -1163,7 +1183,7 @@ func isDigit(c rune) bool {
 var eof = rune(0)
 
 // Regex for removing bounding quotes
-var quoteRemovalRegex = regexp.MustCompile(`"([^"]*)"`)
+var quoteRemovalRegex = regexp.MustCompile(`"(.*)"`)
 
 // Regex for removing bounding parenthesis
 var parenthesisRemovalRegex = regexp.MustCompile(`\(([^"]*)\)`)
